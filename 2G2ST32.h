@@ -1,4 +1,5 @@
 #define FW_VER 190904
+#define FW_SUBVER 14.29        //This subver with default averaging 64 reads enabled 
 /*************************************************************************************************************/
 // #define BENCH_PROTOTYPE     // FOR TESTING ON BENCHTOP ONLY, COMMENT THIS OUT BEFORE PUSHING TO FIELD TEST UNIT 
 #define LIFACE_2               // Lidar Interface 2.0, Jan 2019 PCB, WJP

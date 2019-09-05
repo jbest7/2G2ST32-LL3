@@ -124,7 +124,9 @@ void setup() {
   Serial1.begin(115200); // Pins RX1 and TX1 on the T32 https://www.pjrc.com/teensy/card5a_rev7.png
   Serial2.begin(115200); // Pins RX2 and TX2 on the T32 second I/O to IoT host.
   TestTone(1);  //delay(10);
-  Serial.print("FW_VER:");  Serial.println(FW_VER);
+  Serial.print("FW_VER:");  Serial.print(FW_VER);
+  Serial.print(".");  Serial.print(FW_SUBVER); 
+  
   float fDataRate = (float)1/((float)IRQ_WRITE_PERIOD_uS/1000000);
   Serial.print(fDataRate); Serial.println(" Hz");       
   
