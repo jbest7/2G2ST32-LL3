@@ -32,7 +32,7 @@ int AudioFeedback = FALSE;
 int RaindropMode = FALSE;
 int StreamUSB = FALSE;
 int ReplLongErrantReadings = TRUE;   // To invoke replacement of invalid long distance returns with last goo known reading.
-int SmootherWindow = FALSE;          // TRUE enables code to calc running average & "fix" readings thought to be errant.
+int PopWindow = TRUE;          // TRUE enables code to calc running average & "fix" readings thought to be errant.
 int AvgBkg[2] = {100, 100}, AvgArrayLen = 16;
 int NewRawDist[2] = {0, 0},  LastRawDist[2] = {0, 0};
 int CurrentAvgDist[2] = {100, 100};
@@ -296,7 +296,7 @@ void loop() {
   // if criteria is met, substitute the last valid reading.   NOTE: 'valid' might already be the previous reading
   // if the LL3 too too long to respond.  
   
-  if (ReplLongErrantReadings == TRUE){       
+  if (ReplLongErrantReadings == TRUE){       // default is TRUE.
     for(i=0; i<=1; i++){                     
       DistNow[i] = NewRawDist[i];      // Ultimately DistNow[i] is used by Generate_S200_OutputString(i);
       if(DistNow[i] > (Mean[i] + 2 * StdDev[i])){   // Testing to detect aberant 'far' readings, such as 
@@ -346,7 +346,7 @@ void loop() {
  
   //  Next correction(s) black vehicle, raindrop, average on differential, etc are applied here, prior to
   //   Generate_S200_OutputString(i), and subsequent ISR.
-  if(SmootherWindow == TRUE){  // This will apply the result of avaerage selectively based on impossible differentials.
+  if(PopWindow == TRUE){  // This will apply the result of avaerage selectively based on impossible differentials.
     ;
   }
 
@@ -913,18 +913,15 @@ void PlayTheTune(int scale) {  // A tune as a notification of status.
  *                                           a reading beyond 5 standard deviations of the sampled background.
  */
 /* jwb 190522 Lets USB connected master toggle data stream to USB on and off, added initial audio feedback for aiming, 
- * Added feedback beep to test command echo through ssh/USB.   Took out the code from DEV-DONGLE.
- */
+ * Added feedback beep to test command echo through ssh/USB.   Took out the code from DEV-DONGLE.  */
 // jwb 190528 - cleaned project, removed redundant and extraneous files GarminModes.h and PutAside.cpp
 /* jwb 190529 - adding back HW test points for timing verification & to debug 70mS errant reads.     
                 HW timing does not seem to be the issue.  Timeing is verified 100Hz ISR freq, I2C I/O 800uS-1mS depending
-                on LL3 busy status (800uS = busy, 1mS if ready to read (complete read takes additional time)      
-*/  
-/* jwb 190531 - Added code to allow all ISR & S-200 timestamp variables to be set from IRQ_WRITE_PERIOD_uS.  
- *              Interesting observation:  60-70mS logging freq of vlogs foes away, at least in todays sampling.
-*/
-/*
- * jwb 190815 added audible feedback to acquire good target.  Good target is a background with adequately
- * high repeatability (low std dev) so errant 'long' readings can be removed.
- */
+                on LL3 busy status (800uS = busy, 1mS if ready to read (complete read takes additional time) */  
+// jwb 190531 - Added code to allow all ISR & S-200 timestamp variables to be set from IRQ_WRITE_PERIOD_uS.  
+//             Interesting observation:  60-70mS logging freq of vlogs foes away, at least in todays sampling.
+
+// jwb 190815 added audible feedback to acquire good target.  Good target is a background with adequately
+// high repeatability (low std dev) so errant 'long' readings can be removed.
+// jwb 190911 re-introduced 'pop' filter, new code, not the code removed on 190528. 
  
