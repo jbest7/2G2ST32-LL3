@@ -33,7 +33,8 @@ int RaindropMode = FALSE;
 int StreamUSB = FALSE;
 int ReplLongErrantReadings = TRUE;   // To invoke replacement of invalid long distance returns with last goo known reading.
 int PopWindow = TRUE;          // TRUE enables code to calc running average & "fix" readings thought to be errant.
-int AvgBkg[2] = {100, 100}, AvgArrayLen = 16;
+//int AvgBkg[2] = {100, 100}, 
+int AvgArrayLen = 16;
 int NewRawDist[2] = {0, 0},  LastRawDist[2] = {0, 0};
 int CurrentAvgDist[2] = {100, 100};
 
@@ -55,15 +56,13 @@ volatile int Proc_Head, Proc_Tail;             // pointers for PROC_Buffer[]
 //volatile int Intensity_Hist[2][1025];        // constrained to a 1024 bins by dividing distance by 4, then multiplying when extracted.
 // Intensity maximums thus far 1810124 have been seen no higher than 616.
 
-int AvgLevel = 5;                      //Exponent to set averaging array size, i.e. the x parameter passed in $AV,x.
+int AvgLevel = 3;                      //Exponent to set averaging array size, i.e. the x parameter passed in $AV,x.
 int Valid_S200_Command = FALSE;               // Set to TRUE if real S-200 command is validated, this will trigger command decode and Arduino reply.
 volatile int DistNow[2], SigInt[2], PeakCorr, NoisePeak, LED13_mode, ToneOut;
 volatile float f_millis_S200 = 0, f_last_millis_S200 = 1, millis_ISR_period = 5;
 
 unsigned short CrC;
 int AdditionalParameters = FALSE;
-int SpikeThreshold = 10;  // 10cm jumps in baseline are OK.  Typ threshold from ground ref will be > 10cm above ground reference.
-// SpikeThreshold is the amplitude above the current distance a spike may 'jump'.
 
 volatile int TF_lidar_dist = 0;  //For Benewake TFmini LIDAR
 
@@ -233,7 +232,7 @@ void loop() {
   static unsigned long start_micros, micros_now, elapsed_micros;
   long ReadingAccumulator = 0;   // for the running average maintained by the process buffer (PROC_Buffer).
   static int Got_LL3_2 = FALSE;  //Got_LL3_1 = FALSE, 
-  int SpeakerFreq = 1000, LastSpeakerFreq = 0;
+  int SpeakerFreq = 1000; //, LastSpeakerFreq = 0;
   float ScaleSpeakerFreq = 1;
   
   if (RestartRequired == TRUE) {   CPU_RESTART;   } //ReSetup();   // $SE - send here through any serial port.
@@ -284,80 +283,72 @@ void loop() {
       }
     } 
     Got_LL3_2 = FALSE;   // Broke out of Got_LL3_2 == FALSE loop, need to make it false for next time.
+    // At this point, NewRawDist[n] is the latest distance read, UNLESS the LL3 was busy, in which case, 
+    // NewRawDist[n] will contain the last reading.  
+    // NOTE: DistNow[n] will be the variable used to generate the formatted output string.  
+
+    // FIRST CORRECTION of data:  Distances longer than sampled mean are erroneous.  
+    // Criteria: reading is 'longer' than 'baseline' (distance to background target. (2 standard deviations))
+    // if criteria is met, substitute the last valid reading.   NOTE: 'valid' might already be the previous reading
+    // if the LL3 too too long to respond.  
+  
+    if (ReplLongErrantReadings == TRUE){       // default is TRUE.
+     for(i=0; i<=1; i++){                     
+       DistNow[i] = NewRawDist[i];      // Ultimately DistNow[i] is used by Generate_S200_OutputString(i);
+       if(DistNow[i] > (Mean[i] + 2 * StdDev[i])){   // Testing to detect aberant 'far' readings, such as 
+            DistNow[i] = PreviousReading[i];          // are produced by unusual windshield angles, 'excessive specularity',
+       }                                             // and black vehicles
+     }
+    }else{
+      for(i=0; i<=1; i++){
+        DistNow[i] = NewRawDist[i];
+      }
+   }
+
+
+   // **** Calculate 'running average', i.e. an averave (of variable length) which slides along the raw data.
+   // LIDAR_Dist_Buf[] was used previously for 'raw' data, it now stores 'last good' IF LL3 was busy.
+   // PROC_Buffer[] is a 256 byte ring buffer to hold the sliding average.
+   // Both data arrays use the same head and tail pointers. i.e. they stay synced that way.  
+   if (++Head_In > 255){ Head_In = 0; }
+     Tail_In = (Head_In - Look_Ahead) & 0x00ff;      // Tail pointer follows Head by Look_Ahead. 
+      // Then calculate the new average.
+     if (AvgArrayLen >= 128) AvgArrayLen = 128;  /* For now, need to keep the max averaging array 
+                                                       under 256 so it doesn't run into the tail. */
+     // PROC (or Proc) is generic for PROCess, presently the only process is a running average.
+     Proc_Head = Tail_In;
+     Proc_Tail = (Proc_Head - AvgArrayLen) & 0x00ff;  // Grab incoming data after spike removal (if any)
+  
+     for (i = 0; i <= 1; i++) {       
+       LIDAR_Dist_Buf[i][Head_In] = DistNow[i];    // Put latest reading at head of ring buffer.
+       PROC_Buffer[i][Proc_Head] = LIDAR_Dist_Buf[i][Tail_In];     
+       ReadingAccumulator = 0;
+       for (int q = 0; q <= AvgArrayLen-1; q++){     // accumulates from tail to head.
+         ReadingAccumulator += PROC_Buffer[i][((Proc_Tail + q) & 0x00ff)];
+       }
+       DistNow[i] = (int)(ReadingAccumulator / AvgArrayLen);  // Writing calculated avg to latest PROC value
+     }
+     /****************************************/
+
+    //  SECOND correction, 'Pop' filter (raindrops, and the random errant distances sometimes seen)
+    if(PopWindow == TRUE){  // This will set readings that are bounded by high differentials within 
+                            // 'a few' mS of each other to Mean[n].
+          ;
+    }
+
+    for(i=0; i<=1; i++){               // Last step after all signal corrections....format the string 
+      Generate_S200_OutputString(i);   // to be sent up to the linux board BEFORE the next IRQ.  
+    }
+    if (StreamUSB == TRUE){   // 190815 jwb
+      Generate_USB_OutputString(); 
+    }
   /*************************************************************************************************************/  
   } 
   OutDataSent =  FALSE;   //The previous if(OutDataSent == TRUE) only runs when ISR sets OutDataSent.
-  // At this point, NewRawDist[n] is the latest distance read, UNLESS the LL3 was busy, in which case, 
-  // NewRawDist[n] will contain the last reading.  
-  // NOTE: DistNow[n] will be the variable used to generate the formatted output string.  
 
-  // FIRST CORRECTION of data:  Distances longer than sampled mean are erroneous.  
-  // Criteria: reading is 'longer' than 'baseline' (distance to background target. (2 standard deviations)
-  // if criteria is met, substitute the last valid reading.   NOTE: 'valid' might already be the previous reading
-  // if the LL3 too too long to respond.  
-  
-  if (ReplLongErrantReadings == TRUE){       // default is TRUE.
-    for(i=0; i<=1; i++){                     
-      DistNow[i] = NewRawDist[i];      // Ultimately DistNow[i] is used by Generate_S200_OutputString(i);
-      if(DistNow[i] > (Mean[i] + 2 * StdDev[i])){   // Testing to detect aberant 'far' readings, such as 
-          DistNow[i] = PreviousReading[i];          // are produced by unusual windshield angles, 'excessive specularity',
-      }                                             //  and black vehicles
-    }
-  }else{
-    for(i=0; i<=1; i++){
-      DistNow[i] = NewRawDist[i];
-    }
-  }
-
-  // **** Calculate the 'running average', i.e. an averave (of variable length) which slides along the raw data.
-  // LIDAR_Dist_Buf[] was used previously for 'raw' data, it now stores 'last good' IF LL3 was busy.
-  // PROC_Buffer[] is a 256 byte ring buffer to calc a running average.
-  // Both data arrays use the same head and tail pointers. i.e. they stay synced that way.  
-  if (++Head_In > 255){ Head_In = 0; }
-    Tail_In = (Head_In - Look_Ahead) & 0x00ff;      // Tail pointer follows Head by Look_Ahead. 
-       if (AvgArrayLen > 1) {                         // Then calculate the new average.
-        if (AvgArrayLen >= 128) AvgArrayLen = 128;  /* For now, need to keep the max averaging array 
-                                                       under 256 so it doesn't run into the tail. */
-        // PROC (or Proc) is generic for PROCess, presently the only process is a running average.
-        Proc_Head = Tail_In;
-        Proc_Tail = (Proc_Head - AvgArrayLen) & 0x00ff;  // Grab incoming data after spike removal (if any)
-  
-        for (i = 0; i <= 1; i++) {       
-          LIDAR_Dist_Buf[i][Head_In] = DistNow[i];    // Put latest reading at head of ring buffer.
-          PROC_Buffer[i][Proc_Head] = LIDAR_Dist_Buf[i][Tail_In];     
-          ReadingAccumulator = 0;
-          for (int q = 0; q < AvgArrayLen; q++){     // 
-            ReadingAccumulator += PROC_Buffer[i][((Proc_Tail + q) & 0x00ff)];
-          }
-          AvgBkg[i] = (int)(ReadingAccumulator / AvgArrayLen);  // Writing calculated avg to latest PROC value
-        }
-      } else {                                               // No averaging,
-        for (int n = 0; n <= 1; n++) {
-          AvgBkg[n] = LIDAR_Dist_Buf[n][Tail_In];
-          PROC_Buffer[n][Proc_Head] = LIDAR_Dist_Buf[n][Tail_In];
-        }
-      }
-      // At this point, AvgBkg[n] should have the averaged result.  Move into DistNow[n] so it's available for the outpur string.
-      for (i = 0; i <= 1; i++) {       
-        DistNow[i] = AvgBkg[i];
-      }
-    /****************************************/
-
- 
-  //  Next correction(s) black vehicle, raindrop, average on differential, etc are applied here, prior to
-  //   Generate_S200_OutputString(i), and subsequent ISR.
-  if(PopWindow == TRUE){  // This will apply the result of avaerage selectively based on impossible differentials.
-    ;
-  }
-
-  for(i=0; i<=1; i++){               // Last step after all signal corrections....format the string 
-    Generate_S200_OutputString(i);   // to be sent up to the linux board BEFORE the next IRQ.  
-  }
-  if (StreamUSB == TRUE){   // 190815 jwb
-    Generate_USB_OutputString(); 
-  }
    // Speaker range is 1000 Hz at Mean[0] distance, 8000 Hz at 0 cm.  
    // For ref, on SN 126642180104, cutoff freq of spkr is ~800Hz.  
+   /*   Removed temporarily 190911 until time effect is confirmed 
    if ((DistNow[0] < FarThreshold[0]) || (DistNow[1] < FarThreshold[1])){
       digitalWrite(PIN_RedLaser, RED_LASER_ON);    
       if (AudioFeedback == TRUE){  // Put out a tone every so many entries so this dowsn't sound too bad.
@@ -367,7 +358,7 @@ void loop() {
    }else{
      noTone (PIN_Speaker);
      digitalWrite(PIN_RedLaser, RED_LASER_OFF);
-   }
+   }  */
   int ret = 0;
   if (Serial.available() > 0 ) { ret=Build_Check_S200_Command(0);  // USB port
   } else {
@@ -514,8 +505,9 @@ int Process_S200_Command(int SourcePort, char *CommandString) {   //  S-200 and 
       case 0: LL3_FW = GetFWsn(0);  
               Serial.print ("Lidar_"); Serial.print (LidarAddress[0]); Serial.print (" FW Ver:");  Serial.println(LL3_FW); 
               LL3_FW = GetFWsn(1); 
-              Serial.print ("Lidar_"); Serial.print (LidarAddress[1]); Serial.print (" FW Ver:");  Serial.println (LL3_FW);  
-              sprintf(OutgoingString, "%d", FW_VER);       break;
+              Serial.print ("Lidar_"); Serial.print (LidarAddress[1]); Serial.print (" FW Ver:");  Serial.println (LL3_FW);
+              Serial.print ("Teensy FW:"); Serial.print(FW_VER); Serial.print("-");  Serial.println(FW_SUBVER);       //sprintf(OutgoingString, "%d", FW_VER);       
+              break;
       case 1: strcpy(OutgoingString, "SER-1"); break;
       case 2: strcpy(OutgoingString, "SER-2"); break;
       default: break;
@@ -542,12 +534,8 @@ int Process_S200_Command(int SourcePort, char *CommandString) {   //  S-200 and 
             switch (CommandString[2]) {
               case 'R':     CPU_RESTART;                                                     break; // $SH Reboots CPU.   'hard' reset
               case 'B':     SampleBackground();                                              break;  //$SB (Sample Background)
-              case 'D':     StdDevSampleCutoff = CommandString[4]-48;    SampleBackground();    break;  //$SB (Sample Background)
-              default:  
-                  #ifdef DEBUG_USB
-                    Serial.print("Bkg is: "); Serial.print(AvgBkg[0]);    
-                  #endif 
-                break;
+              case 'D':     StdDevSampleCutoff = CommandString[4]-48;    SampleBackground(); break;  //$SB (Sample Background)
+              default:                                                                       break;
             }                                                                 break; //$Sx
           case 'L':
             switch (CommandString[2]) {

@@ -168,8 +168,8 @@ int MoveLidar_Address(void) {
 int GetFWsn (int WhichLidar){
     uint8_t reading_High_FW_ADDR = Lidar_Read(WhichLidar, RED_ADDR_FWRev_High); 
     uint8_t reading_Low_FW_ADDR = Lidar_Read(WhichLidar, RED_ADDR_FWRev_Low);
-    Serial.print("LL3:"); Serial.print(WhichLidar); 
-    Serial.print(" FW:"); Serial.print(reading_Low_FW_ADDR);  Serial.print("."); Serial.println(reading_High_FW_ADDR);
+    //Serial.print("LL3:"); Serial.print(WhichLidar); 
+    //Serial.print(" FW:"); Serial.print(reading_Low_FW_ADDR);  Serial.print("."); Serial.println(reading_High_FW_ADDR);
     return (reading_High_FW_ADDR << 8) + reading_Low_FW_ADDR;
 }
 
