@@ -31,7 +31,7 @@ int Run_Port1 = FALSE, Run_Port2 = FALSE;
 int AudioFeedback = FALSE;
 int RaindropMode = FALSE;
 int StreamUSB = FALSE;
-int ReplLongErrantReadings = TRUE;   // To invoke replacement of invalid long distance returns with last goo known reading.
+int ReplLongErrantReadings = FALSE;   // To invoke replacement of invalid long distance returns with last goo known reading.
 int PopWindow = TRUE;          // TRUE enables code to calc running average & "fix" readings thought to be errant.
 //int AvgBkg[2] = {100, 100}, 
 int AvgArrayLen = 16;
@@ -136,7 +136,7 @@ void setup() {
   Timer_Watchdog_NonRespond_Peripherals.begin(INT_Watchdog, 1000000); 
   //LaserFlash.begin(INT_LaserFlash, 1000);
   
-  SampleBackground();
+  SampleBackground(-1);
   TestTone(4);
 }
 
@@ -292,7 +292,7 @@ void loop() {
     // if criteria is met, substitute the last valid reading.   NOTE: 'valid' might already be the previous reading
     // if the LL3 too too long to respond.  
   
-    if (ReplLongErrantReadings == TRUE){       // default is TRUE.
+    if (ReplLongErrantReadings == TRUE){       // default is FALSE.
      for(i=0; i<=1; i++){                     
        DistNow[i] = NewRawDist[i];      // Ultimately DistNow[i] is used by Generate_S200_OutputString(i);
        if(DistNow[i] > (Mean[i] + 2 * StdDev[i])){   // Testing to detect aberant 'far' readings, such as 
@@ -301,7 +301,11 @@ void loop() {
      }
     }else{
       for(i=0; i<=1; i++){
-        DistNow[i] = NewRawDist[i];
+        if(NewRawDist[i] < 10){  // Error is 0.0, typ of infinite dist 
+          DistNow[i] = 2000;  
+        }else{
+         DistNow[i] = NewRawDist[i];  
+        }
       }
    }
 
@@ -532,10 +536,11 @@ int Process_S200_Command(int SourcePort, char *CommandString) {   //  S-200 and 
             }                                                                          break;   // $Ex    
           case 'S':                                                       
             switch (CommandString[2]) {
-              case 'R':     CPU_RESTART;                                                     break; // $SH Reboots CPU.   'hard' reset
-              case 'B':     SampleBackground();                                              break;  //$SB (Sample Background)
-              case 'D':     StdDevSampleCutoff = CommandString[4]-48;    SampleBackground(); break;  //$SB (Sample Background)
-              default:                                                                       break;
+              case 'R':     CPU_RESTART;                                                break;  //$SH Reboots CPU.   'hard' reset
+              case 'B':     SampleBackground(StdDevSampleCutoff);                       break;  //$SB (Sample Background)
+              case 'D':     StdDevSampleCutoff = CommandString[4]-48;    
+                            SampleBackground(StdDevSampleCutoff);                       break;  //$SD,x
+              default:                                                                  break;
             }                                                                 break; //$Sx
           case 'L':
             switch (CommandString[2]) {
@@ -561,14 +566,14 @@ int Process_S200_Command(int SourcePort, char *CommandString) {   //  S-200 and 
                     Serial.print("2^"); Serial.print(AvgLevel); Serial.print("=");  Serial.println(AvgArrayLen);
                   #endif
                 } else {
-                  AvgArrayLen = 0;
+                  AvgArrayLen = 4;
                 }                                                       break;  // $AV,x end of test for legit averaging mode
               case '?':  
                 #ifdef DEBUG_USB
                   Serial.println(AvgArrayLen);                   
                 #endif 
                                                                         break;  // $A?  (Get sizeof averaging buffer)
-              default: AvgArrayLen = 0;                                 break;  // case was $Ax, not a recognized $A command
+              default: AvgArrayLen = 4;                                 break;  // case was $Ax, not a recognized $A command
             }                                                           break;  // End of case $Ax  (Test for $Averaging command)
           case 'R':
             switch (CommandString[2]) {
@@ -589,10 +594,8 @@ int Process_S200_Command(int SourcePort, char *CommandString) {   //  S-200 and 
                 if (RaindropMode != 0) {  Serial.println("RD mode ON");
                 } else {                  Serial.println("RD mode OFF");
                 }
-                break;  // $R?       
-                
-              default: RaindropMode = 1;  //Serial.println("RD mode ON");
-                SampleBackground();                                         break;  // $Rx default (raw data) 
+                break;  // $R?
+              default: RaindropMode = 1;                                    break;  // $Rx default (raw data) 
             }                                                               break;   // $R
           case 'C':
             switch (CommandString[2]) {
@@ -602,8 +605,7 @@ int Process_S200_Command(int SourcePort, char *CommandString) {   //  S-200 and 
                 if (ClipperMode != 0) {   Serial.println("Clipper ON"); 
                 } else {                  Serial.println("Clipper OFF"); 
                 }                                                           break;   // $C?
-              default: ClipperMode = 1;   Serial.println("Clipper ON"); 
-                SampleBackground();                                         break;  // $Cx  default (raw data)
+              default: ClipperMode = 1;   Serial.println("Clipper ON"); //SampleBackground();                                         break;  // $Cx  default (raw data)
             }                                                               break;   // $C
           // ******  END of cases for 'S-200+' (Garmin or SEEED) NEW functionality  *************
           // ******  START of cases for S-200 supported commands                    *************
@@ -757,14 +759,15 @@ static inline unsigned short crc16(unsigned short crc, unsigned char const *buff
 extern uint16_t gen_crc16(const uint8_t *data, uint16_t size);
 
 
-void SampleBackground(void) {  // This routine samples BKG_STDEV_SAMPLE readings and calcs the mean and standard deviation
+void SampleBackground(int StopLevel) {  // This routine samples BKG_STDEV_SAMPLE readings and calcs the mean and standard deviation
+                                        // StopLevel parameter is new just to grab means, stddev and get out.
   unsigned int n, Distances[2][BKG_STDEV_SAMPLE];
   int Freq, LrgerStDevRnd=0;
   int Sampling = TRUE, loops=0;
   float accumulator[2] = {0,0};
   //noInterrupts(); 
   AvgArrayLen = CalcAvgArrayLen(1); //AvgLevel);
-  //digitalWrite(PIN_RedLaser, RED_LASER_ON);
+  digitalWrite(PIN_RedLaser, RED_LASER_ON);
   LaserFlash.begin(INT_LaserFlash, 250000);
   pinMode(PIN_Speaker, OUTPUT);    // Enable speaker.
   //OutDataSent = TRUE;   //  Why does OutDatSent get set TRUE here?  Seems like a mistake.  ?
@@ -820,7 +823,7 @@ void SampleBackground(void) {  // This routine samples BKG_STDEV_SAMPLE readings
     }
     #endif
     
-    if ( (StdDev[0] < StdDevSampleCutoff ) && (StdDev[1] < StdDevSampleCutoff) ){   // Samples until this condition is met. i.e. samples  
+    if ( ((StdDev[0] < StdDevSampleCutoff ) && (StdDev[1] < StdDevSampleCutoff)) || StopLevel < 1 ){   // Samples until this condition is met. i.e. samples  
           Sampling = FALSE;  
           PlayTheTune(1);
           noTone(PIN_Speaker);                                // until lasers are targeted on a 'decent' background.
