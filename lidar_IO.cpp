@@ -236,10 +236,11 @@ return;
 void DumpLidarRegisters(int SelectLidar){
   char registerContent, ReturnBuf[8];
   uint8_t  n=0;
+  Serial.println("LidarDump");
   for (n=0; n<=127; n++){
     registerContent = Lidar_Read(SelectLidar, n);
-      sprintf(ReturnBuf, "%2X", registerContent);
-      // Serial.print(ReturnBuf); 
+      sprintf(ReturnBuf, "%d,%d,%2X", SelectLidar, n, registerContent);
+      Serial.println(ReturnBuf); 
   }
   return; 
 }

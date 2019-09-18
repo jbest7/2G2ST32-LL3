@@ -31,7 +31,7 @@ int Run_Port1 = FALSE, Run_Port2 = FALSE;
 int AudioFeedback = FALSE;
 int RaindropMode = FALSE;
 int StreamUSB = FALSE;
-int ReplLongErrantReadings = TRUE;   // To invoke replacement of invalid long distance returns with last goo known reading.
+int ReplLongErrantReadings = FALSE;   // To invoke replacement of invalid long distance returns with last goo known reading.
 int PopWindow = TRUE;          // TRUE enables code to calc running average & "fix" readings thought to be errant.
 //int AvgBkg[2] = {100, 100}, 
 int AvgArrayLen = 16;
@@ -136,7 +136,9 @@ void setup() {
   Timer_Watchdog_NonRespond_Peripherals.begin(INT_Watchdog, 1000000); 
   //LaserFlash.begin(INT_LaserFlash, 1000);
   
-  SampleBackground();
+ //DumpLidarRegisters(0);
+ //DumpLidarRegisters(1);
+ // SampleBackground();
   TestTone(4);
 }
 
@@ -301,6 +303,8 @@ void loop() {
      }
     }else{
       for(i=0; i<=1; i++){
+        if ( NewRawDist[i] > 1200 ){NewRawDist[i] = 1200; }
+        if ( NewRawDist[i] < 10 ){NewRawDist[i] = 1200; }
         DistNow[i] = NewRawDist[i];
       }
    }
@@ -387,12 +391,13 @@ void Generate_USB_OutputString(void) {
   sprintf(bufTemp, ",%3.2f", fDistNow); //
   strcat(TempOutBuf, bufTemp);
     
+  /*
   sprintf(bufTemp, ",%4.3f", f_millis_S200 / 1000); // Get time
   strcat(TempOutBuf, bufTemp);  
 
   sprintf(bufTemp, ",%d,%d", busybit[0], busybit[1]);
   strcat(TempOutBuf, bufTemp);  
-  
+  */
   strcat(OutString[2], TempOutBuf);
   interrupts();
   return;
